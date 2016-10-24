@@ -354,66 +354,18 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
         except NotFound:
             issue_updates['new'].append(dict(issue))
 
-    notreally = ' (not really)' if dry_run else ''
     # Add new issues
     log.info("Adding %i tasks", len(issue_updates['new']))
     for issue in issue_updates['new']:
-        log.info("Adding task %s%s",
-            issue['description'], notreally)
-        if dry_run:
-            continue
-        if notify:
-            send_notification(issue, 'Created', conf)
-
-        try:
-            tw.task_add(**issue)
-        except TaskwarriorError as e:
-            log.exception("Unable to add task: %s" % e.stderr)
+        create_task(tw, issue, dry_run, notify, conf)
 
     log.info("Updating %i tasks", len(issue_updates['changed']))
     for issue in issue_updates['changed']:
-        changes = '; '.join([
-            '{field}: {f} -> {t}'.format(
-                field=field,
-                f=repr(ch[0]),
-                t=repr(ch[1])
-            )
-            for field, ch in six.iteritems(issue.get_changes(keep=True))
-        ])
-        log.info(
-            "Updating task %s, %s; %s%s",
-            six.text_type(issue['uuid']),
-            issue['description'],
-            changes,
-            notreally
-        )
-        if dry_run:
-            continue
-
-        try:
-            tw.task_update(issue)
-        except TaskwarriorError as e:
-            log.exception("Unable to modify task: %s" % e.stderr)
+        modify_task(tw, issue, dry_run)
 
     log.info("Closing %i tasks", len(issue_updates['closed']))
     for issue in issue_updates['closed']:
-        _, task_info = tw.get_task(uuid=issue)
-        log.info(
-            "Completing task %s %s%s",
-            issue,
-            task_info.get('description', ''),
-            notreally
-        )
-        if dry_run:
-            continue
-
-        if notify:
-            send_notification(task_info, 'Completed', conf)
-
-        try:
-            tw.task_done(uuid=issue)
-        except TaskwarriorError as e:
-            log.exception("Unable to close task: %s" % e.stderr)
+        close_task(tw, issue, dry_run, notify, conf)
 
     # Send notifications
     if notify:
@@ -431,6 +383,68 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
                 conf,
             )
 
+
+def create_task(taskwarrior, issue, dry_run, notify, conf):
+    """ Create a new task in taskwarrior from the given issue. """
+    log.info("Adding task %s%s", issue['description'], _notreally(dry_run))
+    if dry_run:
+        return
+    if notify:
+        send_notification(issue, 'Created', conf)
+    try:
+        taskwarrior.task_add(**issue)
+    except TaskwarriorError as e:
+        log.exception("Unable to add task: %s" % e.stderr)
+
+
+def modify_task(taskwarrior, task, dry_run):
+    """ Update the given task in taskwarrior """
+    changes = '; '.join([
+        '{field}: {f} -> {t}'.format(
+            field=field,
+            f=repr(ch[0]),
+            t=repr(ch[1])
+        )
+        for field, ch in six.iteritems(task.get_changes(keep=True))
+    ])
+    log.info(
+        "Updating task %s, %s; %s%s",
+        six.text_type(task['uuid']),
+        task['description'],
+        changes,
+        _notreally(dry_run)
+    )
+    if dry_run:
+        return
+    try:
+        taskwarrior.task_update(task)
+    except TaskwarriorError as e:
+        log.exception("Unable to modify task: %s" % e.stderr)
+
+
+def close_task(taskwarrior, uuid, dry_run, notify, conf):
+    """ CLose the given task in taskwarrior """
+    _, task_info = taskwarrior.get_task(uuid=uuid)
+    log.info(
+        "Completing task %s %s%s",
+        uuid,
+        task_info.get('description', ''),
+        _notreally(dry_run)
+    )
+    if dry_run:
+        return
+    if notify:
+        send_notification(task_info, 'Completed', conf)
+    try:
+        taskwarrior.task_done(uuid=uuid)
+    except TaskwarriorError as e:
+        log.exception("Unable to close task: %s" % e.stderr)
+
+
+def _notreally(dry_run):
+    """ A simplle function that return the string " (not really)" if its
+    argument is true, the empty string otherwise. """
+    return " (not really)" if dry_run else ""
 
 def build_key_list(targets):
     from bugwarrior.services import get_service

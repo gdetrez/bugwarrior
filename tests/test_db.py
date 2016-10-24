@@ -1,7 +1,9 @@
+from mock import Mock, patch
 import unittest
 
 import taskw.task
-from bugwarrior.db import merge_left
+from bugwarrior.db import (
+    merge_left, create_task, _notreally, modify_task, close_task)
 
 
 class DBTest(unittest.TestCase):
@@ -17,3 +19,66 @@ class DBTest(unittest.TestCase):
         task = taskw.task.Task({})
         merge_left('annotations', task, self.issue_dict)
         self.assertEquals(task, self.issue_dict)
+
+
+class CreateTaskTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tw = Mock()
+        self.issue = { 'description': 'foobar', 'myattr': 42 }
+
+    def test_create_task(self):
+        create_task(self.tw, self.issue, False, False, None)
+        self.tw.task_add.assert_called_once_with(**self.issue)
+
+    def test_create_task_dry_run(self):
+        create_task(self.tw, self.issue, True, False, None)
+        self.tw.task_add.assert_not_called()
+
+    @patch('bugwarrior.db.send_notification')
+    def test_close_task_notify(self, send_notification_mock):
+        create_task(self.tw, self.issue, False, True, None)
+        send_notification_mock.assert_called()
+
+
+class ModifyTaskTest(unittest.TestCase):
+
+    def setUp(self):
+        self.tw = Mock()
+        self.task = taskw.task.Task(
+            {'uuid': '12345678123456781234567812345678', 'description': "foobar", 'myattr': 42})
+        self.task.update({'myattr': 43})
+
+    def test_modify_task(self):
+        modify_task(self.tw, self.task, False)
+        self.tw.task_update.assert_called_once_with(self.task)
+
+    def test_dry_run(self):
+        modify_task(self.tw, self.task, True)
+        self.tw.task_update.assert_not_called()
+
+
+class CloseTaskTest(unittest.TestCase):
+
+    def setUp(self):
+        task = taskw.task.Task(
+            {'uuid': '12345678123456781234567812345678',
+             'description': "foobar",
+             'myattr': 42})
+        self.tw = Mock()
+        self.tw.get_task.return_value = (None, task)
+        self.uuid = task['uuid']
+        self.conf = Mock()
+
+    def test_close_task(self):
+        close_task(self.tw, self.uuid, False, False, None)
+        self.tw.task_done.assert_called_once_with(uuid=self.uuid)
+
+    def test_close_task_dry_run(self):
+        close_task(self.tw, self.uuid, True, False, None)
+        self.tw.task_done.assert_not_called()
+
+    @patch('bugwarrior.db.send_notification')
+    def test_close_task_notify(self, send_notification_mock):
+        close_task(self.tw, self.uuid, False, True, None)
+        send_notification_mock.assert_called()
