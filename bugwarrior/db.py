@@ -8,6 +8,7 @@ import subprocess
 import requests
 import dogpile.cache
 import six
+from six.moves import input
 from taskw import TaskWarriorShellout
 from taskw.exceptions import TaskwarriorError
 
@@ -271,7 +272,7 @@ def run_hooks(conf, name):
                     raise RuntimeError(msg)
 
 
-def synchronize(issue_generator, conf, main_section, dry_run=False):
+def synchronize(issue_generator, conf, main_section, dry_run=False, timid=False):
     def _bool_option(section, option, default):
         try:
             return asbool(conf.get(section, option))
@@ -357,15 +358,15 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
     # Add new issues
     log.info("Adding %i tasks", len(issue_updates['new']))
     for issue in issue_updates['new']:
-        create_task(tw, issue, dry_run, notify, conf)
+        create_task(tw, issue, dry_run, timid, notify, conf)
 
     log.info("Updating %i tasks", len(issue_updates['changed']))
     for issue in issue_updates['changed']:
-        modify_task(tw, issue, dry_run)
+        modify_task(tw, issue, dry_run, timid)
 
     log.info("Closing %i tasks", len(issue_updates['closed']))
     for issue in issue_updates['closed']:
-        close_task(tw, issue, dry_run, notify, conf)
+        close_task(tw, issue, dry_run, timid, notify, conf)
 
     # Send notifications
     if notify:
@@ -384,10 +385,10 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
             )
 
 
-def create_task(taskwarrior, issue, dry_run, notify, conf):
+def create_task(taskwarrior, issue, dry_run, timid, notify, conf):
     """ Create a new task in taskwarrior from the given issue. """
     log.info("Adding task %s%s", issue['description'], _notreally(dry_run))
-    if dry_run:
+    if dry_run or (timid and not _confirm()):
         return
     if notify:
         send_notification(issue, 'Created', conf)
@@ -397,7 +398,7 @@ def create_task(taskwarrior, issue, dry_run, notify, conf):
         log.exception("Unable to add task: %s" % e.stderr)
 
 
-def modify_task(taskwarrior, task, dry_run):
+def modify_task(taskwarrior, task, dry_run, timid):
     """ Update the given task in taskwarrior """
     changes = '; '.join([
         '{field}: {f} -> {t}'.format(
@@ -414,7 +415,7 @@ def modify_task(taskwarrior, task, dry_run):
         changes,
         _notreally(dry_run)
     )
-    if dry_run:
+    if dry_run or (timid and not _confirm()):
         return
     try:
         taskwarrior.task_update(task)
@@ -422,7 +423,7 @@ def modify_task(taskwarrior, task, dry_run):
         log.exception("Unable to modify task: %s" % e.stderr)
 
 
-def close_task(taskwarrior, uuid, dry_run, notify, conf):
+def close_task(taskwarrior, uuid, dry_run, timid, notify, conf):
     """ CLose the given task in taskwarrior """
     _, task_info = taskwarrior.get_task(uuid=uuid)
     log.info(
@@ -431,7 +432,7 @@ def close_task(taskwarrior, uuid, dry_run, notify, conf):
         task_info.get('description', ''),
         _notreally(dry_run)
     )
-    if dry_run:
+    if dry_run or (timid and not _confirm()):
         return
     if notify:
         send_notification(task_info, 'Completed', conf)
@@ -440,6 +441,12 @@ def close_task(taskwarrior, uuid, dry_run, notify, conf):
     except TaskwarriorError as e:
         log.exception("Unable to close task: %s" % e.stderr)
 
+
+def _confirm():
+    """ Ask for confirmation and interpret the answer. The possible choices are
+    apply or skip. Returns a boolean. """
+    answer = input("[A]pply or [s]kip?")
+    return answer == 'a'
 
 def _notreally(dry_run):
     """ A simplle function that return the string " (not really)" if its

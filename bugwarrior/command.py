@@ -50,7 +50,9 @@ def _try_load_config(main_section, interactive=False):
 @click.option('--interactive', is_flag=True)
 @click.option('--debug', is_flag=True,
               help='Do not use multiprocessing (which breaks pdb).')
-def pull(dry_run, flavor, interactive, debug):
+@click.option('--timid', is_flag=True,
+              help="Ask confirmation for each action.")
+def pull(dry_run, flavor, interactive, debug, timid):
     """ Pull down tasks from forges and add them to your taskwarrior tasks.
 
     Relies on configuration in bugwarriorrc
@@ -69,7 +71,7 @@ def pull(dry_run, flavor, interactive, debug):
             issue_generator = aggregate_issues(config, main_section, debug)
 
             # Stuff them in the taskwarrior db as necessary
-            synchronize(issue_generator, config, main_section, dry_run)
+            synchronize(issue_generator, config, main_section, dry_run, timid)
         finally:
             lockfile.release()
     except LockTimeout:
