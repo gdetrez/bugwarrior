@@ -26,68 +26,62 @@ def _cache_logo():
     urllib.request.urlretrieve(logo_url, logo_path)
 
 
-def _get_metadata(issue):
-    due = ''
-    tags = ''
-    priority = ''
-    metadata = ''
-    project = ''
-    if 'project' in issue:
-        project = "Project: " + issue['project']
-    # if 'due' in issue:
-    #     due = "Due: " + datetime.datetime.fromtimestamp(
-    #         int(issue['due'])).strftime('%Y-%m-%d')
-    if 'tags' in issue:
-        tags = "Tags: " + ', '.join(issue['tags'])
-    if 'priority' in issue:
-        priority = "Priority: " + issue['priority']
-    if project != '':
-        metadata += "\n" + project
-    if priority != '':
-        metadata += "\n" + priority
-    if due != '':
-        metadata += "\n" + due
-    if tags != '':
-        metadata += "\n" + tags
-    return metadata
+class Notifier:
+
+    def __init__(self, backend,
+                 finished_querying_sticky=False, task_crud_sticky=False):
+        self.backend = backend
+        self.finished_querying_sticky = finished_querying_sticky
+        self.task_crud_sticky = task_crud_sticky
+
+    def _make_notification(self, body, sticky=False):
+        return Notification(
+            summary="Bugwarrior", body=body, sticky=sticky, icon=logo_path)
+
+    def bw_finishes(self, report):
+        body = "Finished querying for new issues.\n%s" % report
+        self.backend.notify(
+            self._make_notification(body, sticky=self.finished_querying_sticky))
+
+    def task_change(self, op, task):
+        message = "%s task: %s" % (op, task['description'])
+        if 'project' in task:
+            message += "\nProject: {}".format(task['project'])
+        if 'priority' in task:
+            message += "\nPriority: {}".format(task['priority'])
+        if 'tags' in task:
+            message += "\nTags: {}".format(', '.join(task['tags']))
+        self.backend.notify(self._make_notification(
+            message, sticky=self.task_crud_sticky))
 
 
-def send_notification(issue, op, conf):
-    notify_backend = conf.get('notifications', 'backend')
-
-    # Notifications for growlnotify on Mac OS X
+def notification_backend(notify_backend):
     if notify_backend == 'growlnotify':
-        backend = GrowlNotificationBackend()
+        return GrowlNotificationBackend()
     elif notify_backend == 'pynotify':
-        backend = PynotifyNotificationBackend()
+        return PynotifyNotificationBackend()
     elif notify_backend == 'gobject':
-        backend = GobjectNotificationBackend()
+        return GobjectNotificationBackend()
     else:
         raise ValueError(
             "Unknown notification backend: {}".format(notify_backend))
 
+
+def send_notification(issue, op, conf):
+    notify_backend = conf.get('notifications', 'backend')
+    backend = notification_backend(notify_backend)
     _cache_logo()
+    notifier = Notifier(
+        backend,
+        finished_querying_sticky=asbool(conf.get(
+            'notifications', 'finished_querying_sticky', 'True')),
+        task_crud_sticky=asbool(conf.get(
+            'notifications', 'task_crud_sticky', 'True')))
 
     if op == 'bw finished':
-        notification = Notification(
-            summary="Bugwarrior",
-            body="Finished querying for new issues.\n%s" % issue['description'],
-            icon=logo_path,
-            sticky=asbool(conf.get(
-                    'notifications', 'finished_querying_sticky', 'True')))
+        notifier.bw_finished(issue['description'])
     else:
-        message = "%s task: %s" % (op, issue['description'])
-        metadata = _get_metadata(issue)
-        if metadata is not None:
-            message += metadata
-        notification = Notification(
-            summary="Bugwarrior",
-            body=message,
-            icon=logo_path,
-            sticky=asbool(conf.get(
-                    'notifications', 'task_crud_sticky', 'True')))
-
-    backend.notify(notification)
+        notifier.task_change(op, issue)
 
 
 Notification = namedtuple("Notification", ['summary', 'body', 'icon', 'sticky'])
