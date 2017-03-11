@@ -1,6 +1,9 @@
 from future import standard_library
 standard_library.install_aliases()
+
+from collections import namedtuple
 import datetime
+from importlib import import_module
 import os
 import urllib.request, urllib.parse, urllib.error
 
@@ -54,72 +57,83 @@ def send_notification(issue, op, conf):
 
     # Notifications for growlnotify on Mac OS X
     if notify_backend == 'growlnotify':
-        import gntp.notifier
-        growl = gntp.notifier.GrowlNotifier(
-            applicationName="Bugwarrior",
-            notifications=["New Updates", "New Messages"],
-            defaultNotifications=["New Messages"],
-        )
-        growl.register()
-        if op == 'bw_finished':
-            growl.notify(
-                noteType="New Messages",
-                title="Bugwarrior",
-                description="Finished querying for new issues.\n%s" %
-                issue['description'],
-                sticky=asbool(conf.get(
-                    'notifications', 'finished_querying_sticky', 'True')),
-                icon="https://upload.wikimedia.org/wikipedia/"
-                "en/5/59/Taskwarrior_logo.png",
-                priority=1,
-            )
-            return
+        backend = GrowlNotificationBackend()
+    elif notify_backend == 'pynotify':
+        backend = PynotifyNotificationBackend()
+    elif notify_backend == 'gobject':
+        backend = GobjectNotificationBackend()
+    else:
+        raise ValueError(
+            "Unknown notification backend: {}".format(notify_backend))
+
+    _cache_logo()
+
+    if op == 'bw finished':
+        notification = Notification(
+            summary="Bugwarrior",
+            body="Finished querying for new issues.\n%s" % issue['description'],
+            icon=logo_path,
+            sticky=asbool(conf.get(
+                    'notifications', 'finished_querying_sticky', 'True')))
+    else:
         message = "%s task: %s" % (op, issue['description'])
         metadata = _get_metadata(issue)
         if metadata is not None:
             message += metadata
-        growl.notify(
-            noteType="New Messages",
-            title="Bugwarrior",
-            description=message,
+        notification = Notification(
+            summary="Bugwarrior",
+            body=message,
+            icon=logo_path,
             sticky=asbool(conf.get(
-                'notifications', 'task_crud_sticky', 'True')),
-            icon="https://upload.wikimedia.org/wikipedia/"
-            "en/5/59/Taskwarrior_logo.png",
-            priority=1,
+                    'notifications', 'task_crud_sticky', 'True')))
+
+    backend.notify(notification)
+
+
+Notification = namedtuple("Notification", ['summary', 'body', 'icon', 'sticky'])
+
+
+class BaseNotificationBackend:
+    def notify(self, notification):
+        raise NotImplementedError()
+
+
+class GobjectNotificationBackend(BaseNotificationBackend):
+    def __init__(self):
+        import_module('gi').require_version('Notify', '0.7')
+        self._Notify = import_module('gi.repository.Notify')
+        self._Notify.init("bugwarrior")
+
+    def notify(self, notification):
+        self._Notify.Notification.new(
+            notification.summary, notification.body, notification.icon).show()
+
+
+class PynotifyNotificationBackend(BaseNotificationBackend):
+    def __init__(self):
+        self._pynotify = import_module('pynotify')
+        self._pynotify.init("bugwarrior")
+
+    def notify(self, notification):
+        self._pynotify.Notification(
+            notification.summary, notification.body, notification.icon).show()
+
+
+class GrowlNotificationBackend(BaseNotificationBackend):
+    def __init__(self):
+        self._growl = import_module('gntp.notifier').GrowlNotifier(
+            applicationName="Bugwarrior",
+            notifications=["New Updates", "New Messages"],
+            defaultNotifications=["New Messages"],
         )
-        return
-    elif notify_backend == 'pynotify':
-        _cache_logo()
+        self._growl.register()
 
-        import pynotify
-        pynotify.init("bugwarrior")
-
-        if op == 'bw finished':
-            message = "Finished querying for new issues.\n%s" %\
-                issue['description']
-        else:
-            message = "%s task: %s" % (op, issue['description'])
-            metadata = _get_metadata(issue)
-            if metadata is not None:
-                message += metadata
-
-        pynotify.Notification("Bugwarrior", message, logo_path).show()
-    elif notify_backend == 'gobject':
-        _cache_logo()
-
-        import gi
-        gi.require_version('Notify', '0.7')
-        from gi.repository import Notify
-        Notify.init("bugwarrior")
-
-        if op == 'bw finished':
-            message = "Finished querying for new issues.\n%s" %\
-                issue['description']
-        else:
-            message = "%s task: %s" % (op, issue['description'])
-            metadata = _get_metadata(issue)
-            if metadata is not None:
-                message += metadata
-
-        Notify.Notification.new("Bugwarrior", message, logo_path).show()
+    def notify(self, notification):
+        self._growl.notify(
+            noteType="New Messages",
+            title=notification.summary,
+            description=notification.body,
+            sticky=notification.sticky,
+            icon="file://" + notification.icon,
+            priority=1,
+            )
