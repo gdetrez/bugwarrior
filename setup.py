@@ -41,6 +41,7 @@ setup(name='bugwarrior',
           "lockfile>=0.9.1",
           "click",
           "future!=0.16.0",
+          "blinker",
       ],
       extras_require=dict(
           keyring=["keyring", "dbus-python"],

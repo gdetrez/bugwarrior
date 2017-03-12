@@ -2,18 +2,46 @@ from future import standard_library
 standard_library.install_aliases()
 
 from collections import namedtuple
-import datetime
 from importlib import import_module
 import os
 import urllib.request, urllib.parse, urllib.error
+import logging
+
+from blinker import signal
 
 from bugwarrior.config import asbool
 
+
+log = logging.getLogger(__name__)
 
 cache_dir = os.path.expanduser(os.getenv('XDG_CACHE_HOME', "~/.cache") + "/bugwarrior")
 logo_path = cache_dir + "/logo.png"
 logo_url = "https://upload.wikimedia.org/wikipedia/" + \
     "en/5/59/Taskwarrior_logo.png"
+
+CONFIG_SECTION='notifications'
+
+def setup(config):
+    if not config.has_section(CONFIG_SECTION):
+        return
+    if not config.has_option(CONFIG_SECTION, 'notifications'):
+        log.error("Missing option 'notifications' in section 'notifications', "
+            "Disabling notifications.")
+        return
+    if not asbool(config.get(CONFIG_SECTION, 'notifications')):
+        return
+    if not config.has_option(CONFIG_SECTION, 'backend'):
+        log.error("Missing option 'backend' in section 'notifications', "
+            "Disabling notifications")
+        return
+    backend = notification_backend(config.get(CONFIG_SECTION, 'backend'))
+    global notifier
+    notifier = Notifier(backend)
+    signal('task-created').connect(notifier.on_task_created)
+    signal('task-updated').connect(notifier.on_task_updated)
+    signal('task-completed').connect(notifier.on_task_completed)
+    if not asbool(config.get(CONFIG_SECTION, 'only_on_new_tasks', 'False')):
+        signal('pull_finished').connect(notifier.on_pull_finished)
 
 
 def _cache_logo():
@@ -38,10 +66,24 @@ class Notifier:
         return Notification(
             summary="Bugwarrior", body=body, sticky=sticky, icon=logo_path)
 
-    def bw_finishes(self, report):
+    def on_pull_finished(self, _sender, **kw):
+        stats = kw['stats']
+        report = ", ".join("{}: {}".format(k.capitalize(),v) for k,v in stats.items())
         body = "Finished querying for new issues.\n%s" % report
         self.backend.notify(
             self._make_notification(body, sticky=self.finished_querying_sticky))
+
+    def on_task_created(self, _sender, **kw):
+        task = kw['task']
+        self.task_change('Create', task)
+
+    def on_task_updated(self, _sender, **kw):
+        task = kw['task']
+        self.task_change('Update', task)
+
+    def on_task_completed(self, _sender, **kw):
+        task = kw['task']
+        self.task_change('Complete', task)
 
     def task_change(self, op, task):
         message = "%s task: %s" % (op, task['description'])
@@ -65,23 +107,6 @@ def notification_backend(notify_backend):
     else:
         raise ValueError(
             "Unknown notification backend: {}".format(notify_backend))
-
-
-def send_notification(issue, op, conf):
-    notify_backend = conf.get('notifications', 'backend')
-    backend = notification_backend(notify_backend)
-    _cache_logo()
-    notifier = Notifier(
-        backend,
-        finished_querying_sticky=asbool(conf.get(
-            'notifications', 'finished_querying_sticky', 'True')),
-        task_crud_sticky=asbool(conf.get(
-            'notifications', 'task_crud_sticky', 'True')))
-
-    if op == 'bw finished':
-        notifier.bw_finished(issue['description'])
-    else:
-        notifier.task_change(op, issue)
 
 
 Notification = namedtuple("Notification", ['summary', 'body', 'icon', 'sticky'])

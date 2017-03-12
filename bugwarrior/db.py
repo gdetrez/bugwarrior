@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 
+from blinker import signal
 import requests
 import dogpile.cache
 import six
@@ -17,7 +18,6 @@ from taskw import TaskWarriorShellout
 from taskw.exceptions import TaskwarriorError
 
 from bugwarrior.config import asbool, get_taskrc_path
-from bugwarrior.notifications import send_notification
 
 import logging
 log = logging.getLogger(__name__)
@@ -305,8 +305,6 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
     # Before running CRUD operations, call the pre_import hook(s).
     run_hooks(conf, 'pre_import')
 
-    notify = _bool_option('notifications', 'notifications', False) and not dry_run
-
     tw = TaskWarriorShellout(
         config_filename=get_taskrc_path(conf, main_section),
         config_overrides=uda_list,
@@ -368,11 +366,11 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
     for issue in issue_updates['new']:
         log.info("Adding task %s%s",
             issue['description'], notreally)
+        signal('task-created').send(__name__, task=issue)
+
+
         if dry_run:
             continue
-        if notify:
-            send_notification(issue, 'Created', conf)
-
         try:
             tw.task_add(**issue)
         except TaskwarriorError as e:
@@ -380,21 +378,23 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
 
     log.info("Updating %i tasks", len(issue_updates['changed']))
     for issue in issue_updates['changed']:
-        changes = '; '.join([
+        changes = issue.get_changes(keep=True)
+        changes_str = '; '.join([
             '{field}: {f} -> {t}'.format(
                 field=field,
                 f=repr(ch[0]),
                 t=repr(ch[1])
             )
-            for field, ch in six.iteritems(issue.get_changes(keep=True))
+            for field, ch in six.iteritems(changes)
         ])
         log.info(
             "Updating task %s, %s; %s%s",
             six.text_type(issue['uuid']),
             issue['description'],
-            changes,
+            changes_str,
             notreally
         )
+        signal('task-updated').send(__name__, changes=changes)
         if dry_run:
             continue
 
@@ -412,32 +412,18 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
             task_info.get('description', ''),
             notreally
         )
+        signal('task-completed').send(__name__, task=task_info)
+
         if dry_run:
             continue
-
-        if notify:
-            send_notification(task_info, 'Completed', conf)
 
         try:
             tw.task_done(uuid=issue)
         except TaskwarriorError as e:
             log.exception("Unable to close task: %s" % e.stderr)
 
-    # Send notifications
-    if notify:
-        only_on_new_tasks = _bool_option('notifications', 'only_on_new_tasks', False)
-        if not only_on_new_tasks or len(issue_updates['new']) + len(issue_updates['changed']) + len(issue_updates['closed']) > 0:
-            send_notification(
-                dict(
-                    description="New: %d, Changed: %d, Completed: %d" % (
-                        len(issue_updates['new']),
-                        len(issue_updates['changed']),
-                        len(issue_updates['closed'])
-                    )
-                ),
-                'bw_finished',
-                conf,
-            )
+    signal('pull_finished').send(
+        __name__, stats={ k:len(issue_updates[k]) for k in issue_updates})
 
 
 def build_key_list(targets):

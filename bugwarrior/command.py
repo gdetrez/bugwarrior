@@ -14,6 +14,7 @@ from bugwarrior.db import (
     get_defined_udas_as_strings,
     synchronize,
 )
+import bugwarrior.notifications
 
 import logging
 log = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ def pull(dry_run, flavor, interactive, debug):
         lockfile = PIDLockFile(lockfile_path)
         lockfile.acquire(timeout=10)
         try:
+            bugwarrior.notifications.setup(config)
             # Get all the issues.  This can take a while.
             issue_generator = aggregate_issues(config, main_section, debug)
 
