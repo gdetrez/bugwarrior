@@ -1,3 +1,4 @@
+# coding: utf-8
 from future import standard_library
 standard_library.install_aliases()
 
@@ -62,39 +63,55 @@ class Notifier:
         self.finished_querying_sticky = finished_querying_sticky
         self.task_crud_sticky = task_crud_sticky
 
-    def _make_notification(self, body, sticky=False):
+    def _make_notification(self, body, summary=None, sticky=False):
+        if summary is None:
+            summary = u"Bugwarrior"
+        else:
+            summary = u"Bugwarrior: " + summary
         return Notification(
-            summary="Bugwarrior", body=body, sticky=sticky, icon=logo_path)
+            summary=summary, body=body, sticky=sticky, icon=logo_path)
 
     def on_pull_finished(self, _sender, **kw):
         stats = kw['stats']
-        report = ", ".join("{}: {}".format(k.capitalize(),v) for k,v in stats.items())
-        body = "Finished querying for new issues.\n%s" % report
-        self.backend.notify(
-            self._make_notification(body, sticky=self.finished_querying_sticky))
+        summary = u"Finished querying for new issues."
+        body = u", ".join(u"{}: {}".format(k.capitalize(),v) for k,v in stats.items())
+        self.backend.notify(self._make_notification(
+            body, summary, sticky=self.finished_querying_sticky))
 
     def on_task_created(self, _sender, **kw):
         task = kw['task']
-        self.task_change('Create', task)
+        summary = u"New task"
+        if 'project' in task:
+            summary += u" in project {}".format(task['project'])
+        message = task['description']
+        if 'priority' in task:
+            message += u"\nPriority: {}".format(task['priority'])
+        if 'tags' in task:
+            message += u"\nTags: {}".format(', '.join(task['tags']))
+        self.backend.notify(self._make_notification(
+            message, summary=summary,
+            sticky=self.task_crud_sticky))
 
     def on_task_updated(self, _sender, **kw):
         task = kw['task']
-        self.task_change('Update', task)
+        summary = u"Task updated"
+        message = task['description']
+        if 'project' in task:
+            message += u"\nProject: {}".format(task['project'])
+        if 'priority' in task:
+            message += u"\nPriority: {}".format(task['priority'])
+        if 'tags' in task:
+            message += u"\nTags: {}".format(', '.join(task['tags']))
+        self.backend.notify(self._make_notification(
+            message, summary=summary, sticky=self.task_crud_sticky))
 
     def on_task_completed(self, _sender, **kw):
         task = kw['task']
-        self.task_change('Complete', task)
-
-    def task_change(self, op, task):
-        message = "%s task: %s" % (op, task['description'])
-        if 'project' in task:
-            message += "\nProject: {}".format(task['project'])
-        if 'priority' in task:
-            message += "\nPriority: {}".format(task['priority'])
-        if 'tags' in task:
-            message += "\nTags: {}".format(', '.join(task['tags']))
+        summary = u"Task {} done".format(task['id'])
+        message = task['description']
         self.backend.notify(self._make_notification(
-            message, sticky=self.task_crud_sticky))
+            message, summary=summary,
+            sticky=self.task_crud_sticky))
 
 
 def notification_backend(notify_backend):

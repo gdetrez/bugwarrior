@@ -394,7 +394,7 @@ def synchronize(issue_generator, conf, main_section, dry_run=False):
             changes_str,
             notreally
         )
-        signal('task-updated').send(__name__, changes=changes)
+        signal('task-updated').send(__name__, task=issue)
         if dry_run:
             continue
 
